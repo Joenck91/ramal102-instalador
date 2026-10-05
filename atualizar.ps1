@@ -40,6 +40,27 @@ function Rodar {
   try { & $Comando } finally { $ErrorActionPreference = $antes }
 }
 
+# Tenta de novo antes de desistir.
+#
+# Baixar imagem depende de rede, e rede tropeca. Na primeira
+# atualizacao de verdade, feita numa maquina de verdade, o download
+# falhou uma vez e funcionou no instante seguinte, sem nada ter mudado
+# — e aquela falha unica custou a atualizacao inteira.
+#
+# Tres tentativas com uma pausa entre elas. Nao resolve internet fora,
+# e nem deveria: resolve o tropeco, que e o caso comum.
+function BaixarComTeimosia {
+  for ($i = 1; $i -le 3; $i++) {
+    Rodar { docker compose pull ramal 2>&1 } | Out-Null
+    if ($LASTEXITCODE -eq 0) { return $true }
+    if ($i -lt 3) {
+      Aviso "Nao veio na tentativa $i. Esperando e tentando de novo..."
+      Start-Sleep -Seconds 5
+    }
+  }
+  return $false
+}
+
 $raiz = Split-Path -Parent $MyInvocation.MyCommand.Path
 Set-Location $raiz
 
@@ -229,28 +250,22 @@ Ok "Segredos preservados."
 # 5. Subir a versao nova
 # ---------------------------------------------------------------
 
-Titulo "Subindo"
+Titulo "Buscando a imagem"
 
 # Mesma logica do instalador: baixar pronto quando existe, montar aqui
 # quando nao. Ver o comentario longo no instalar.ps1.
 Write-Host "   Procurando a versao pronta..."
-Rodar { docker compose pull ramal 2>&1 } | Out-Null
-$prontoNaMao = ($LASTEXITCODE -eq 0)
+$prontoNaMao = BaixarComTeimosia
 $global:LASTEXITCODE = 0
 
 if ($prontoNaMao) {
   Ok "Baixada."
-  docker compose up -d
-} elseif (Test-Path "Dockerfile") {
-  Aviso "Sem versao pronta. Remontando aqui, o que leva alguns minutos."
-  Write-Host ""
-  docker compose up -d --build
-} else {
-  # Mesma razao do instalador: a pasta nao traz o codigo-fonte, so o
-  # necessario para rodar. Sem o download nao ha plano B — e dizer isso
-  # e melhor que deixar o Docker reclamar de um Dockerfile que nunca
-  # existiu. Os arquivos ja foram trocados, mas o Ramal antigo continua
-  # no ar: nada se perdeu, so nao avancou.
+} elseif (-not (Test-Path "Dockerfile")) {
+  # A pasta nao traz o codigo-fonte, so o necessario para rodar. Sem o
+  # download nao ha plano B — e dizer isso e melhor que deixar o Docker
+  # reclamar de um Dockerfile que nunca existiu. Os arquivos ja foram
+  # trocados, mas o Ramal antigo continua no ar: nada se perdeu, so nao
+  # avancou.
   Erro "Nao consegui baixar a versao nova do Ramal."
   Erro ""
   Erro "O Ramal que ja estava rodando continua no ar, e os seus dados"
@@ -260,22 +275,50 @@ if ($prontoNaMao) {
   exit 1
 }
 
+# ---------------------------------------------------------------
+# 5. O banco, ANTES de trocar o Ramal
+# ---------------------------------------------------------------
+#
+# A ordem importa e e o contrario da intuicao.
+#
+# Se o Ramal novo subisse primeiro e so depois o banco fosse ajustado,
+# ele acordaria procurando uma coluna que ainda nao existe, morreria, e
+# o Docker o reiniciaria em laco. Com ele reiniciando, nao da para
+# entrar nele para ajustar o banco — e e esse o unico caminho de volta.
+#
+# Fazendo antes, quem roda o ajuste e um container avulso, e o Ramal
+# ANTIGO segue no ar atendendo durante isso. Funciona porque mudanca de
+# banco aqui so soma: coluna nova nao atrapalha a versao velha.
+Titulo "Ajustando o banco"
+Rodar { docker compose up -d --wait inbox-postgres 2>&1 } | Out-Null
+Rodar { docker compose run --rm --no-deps -T ramal npx prisma db push 2>&1 } |
+  Select-String -NotMatch "^$|Update available|prisma@latest|@prisma/client|major-version|^.{0,3}$"
+if ($LASTEXITCODE -ne 0) {
+  Erro "Nao consegui ajustar o banco."
+  Erro "O Ramal antigo continua no ar e os seus dados estao intactos."
+  exit 1
+}
+Ok "Banco em dia."
+
+# ---------------------------------------------------------------
+# 6. Trocar o Ramal
+# ---------------------------------------------------------------
+
+Titulo "Subindo"
+
+if ($prontoNaMao) {
+  docker compose up -d
+} elseif (Test-Path "Dockerfile") {
+  Aviso "Sem versao pronta. Remontando aqui, o que leva alguns minutos."
+  Write-Host ""
+  docker compose up -d --build
+}
+
 if ($LASTEXITCODE -ne 0) {
   Erro "Falhou ao subir. Veja com: docker compose logs"
   exit 1
 }
 Ok "Containers no ar."
-
-# Mudancas de banco entram aqui. O comando e idempotente: quando nao ha
-# nada novo, ele nao faz nada.
-Titulo "Ajustando o banco"
-Rodar { docker compose exec -T ramal npx prisma db push 2>&1 } |
-  Select-String -NotMatch "^$"
-if ($LASTEXITCODE -ne 0) {
-  Erro "Nao consegui ajustar o banco."
-  exit 1
-}
-Ok "Banco em dia."
 
 # ---------------------------------------------------------------
 # 6. Esperar responder

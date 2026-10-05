@@ -32,6 +32,27 @@ function Rodar {
   try { & $Comando } finally { $ErrorActionPreference = $antes }
 }
 
+# Tenta de novo antes de desistir.
+#
+# Baixar imagem depende de rede, e rede tropeca. Na primeira
+# atualizacao de verdade, feita numa maquina de verdade, o download
+# falhou uma vez e funcionou no instante seguinte, sem nada ter mudado
+# — e aquela falha unica custou a atualizacao inteira.
+#
+# Tres tentativas com uma pausa entre elas. Nao resolve internet fora,
+# e nem deveria: resolve o tropeco, que e o caso comum.
+function BaixarComTeimosia {
+  for ($i = 1; $i -le 3; $i++) {
+    Rodar { docker compose pull ramal 2>&1 } | Out-Null
+    if ($LASTEXITCODE -eq 0) { return $true }
+    if ($i -lt 3) {
+      Aviso "Nao veio na tentativa $i. Esperando e tentando de novo..."
+      Start-Sleep -Seconds 5
+    }
+  }
+  return $false
+}
+
 $raiz = Split-Path -Parent $MyInvocation.MyCommand.Path
 Set-Location $raiz
 
@@ -280,6 +301,45 @@ if (Test-Path ".env") {
 # 3. Subir
 # ---------------------------------------------------------------
 
+Titulo "Preparando o banco"
+Write-Host "   As tabelas vem antes, e o Ramal ainda nao subiu."
+
+# A ordem aqui NAO e preciosismo.
+#
+# Ao subir, a primeira coisa que o Ramal faz e procurar a conta
+# inicial. Num banco sem tabela nenhuma essa consulta estoura, o
+# processo morre, o Docker reinicia, e o ciclo se repete para sempre.
+# Com o container reiniciando, nao da para entrar nele para criar as
+# tabelas — a cobra morde o proprio rabo, e foi isso que travou a
+# instalacao da primeira pessoa que nao fui eu.
+#
+# So o banco sobe, e `--wait` segura ate ele estar realmente pronto
+# para aceitar conexao: "container de pe" e outra coisa.
+Rodar { docker compose up -d --wait inbox-postgres 2>&1 } | Out-Null
+if ($LASTEXITCODE -ne 0) {
+  Erro "O banco nao subiu."
+  Erro "Veja o que aconteceu com: docker compose logs inbox-postgres"
+  exit 1
+}
+
+# `run --rm` usa a MESMA imagem do Ramal num container avulso, que faz
+# o servico e morre. `--no-deps` para ele nao arrastar a Evolution
+# junto: ela nao tem nada a ver com as tabelas, e sem isto o download
+# dela aconteceria debaixo da frase "preparando o banco".
+#
+# O comando e idempotente: rodar de novo quando nao ha nada novo nao
+# faz nada. Por isso ele fica aqui tambem numa reinstalacao.
+Rodar { docker compose run --rm --no-deps -T ramal npx prisma db push 2>&1 } |
+  Select-String -NotMatch "^$|Update available|prisma@latest|@prisma/client|major-version|^.{0,3}$"
+if ($LASTEXITCODE -ne 0) {
+  Erro "Nao consegui preparar o banco."
+  Erro "Veja o que aconteceu com: docker compose logs inbox-postgres"
+  exit 1
+}
+Ok "Banco pronto."
+
+# ---------------------------------------------------------------
+
 Titulo "Subindo o Ramal 102"
 
 # Dois caminhos, e o primeiro e muito melhor quando existe.
@@ -296,8 +356,7 @@ Titulo "Subindo o Ramal 102"
 # Tentar e a unica forma de descobrir, e falhar aqui nao custa nada.
 
 Write-Host "   Procurando o Ramal 102 pronto..."
-Rodar { docker compose pull ramal 2>&1 } | Out-Null
-$prontoNaMao = ($LASTEXITCODE -eq 0)
+$prontoNaMao = BaixarComTeimosia
 $global:LASTEXITCODE = 0
 
 if ($prontoNaMao) {
@@ -333,20 +392,6 @@ Ok "Containers no ar."
 
 # ---------------------------------------------------------------
 # 4. Banco
-# ---------------------------------------------------------------
-#
-# O schema e aplicado toda vez, nao so na primeira: o comando e
-# idempotente, e assim uma atualizacao que acrescente uma coluna ja entra
-# sem ninguem precisar lembrar.
-
-Titulo "Preparando o banco"
-Rodar { docker compose exec -T ramal npx prisma db push 2>&1 } |
-  Select-String -NotMatch "^$"
-if ($LASTEXITCODE -ne 0) {
-  Erro "Nao consegui preparar o banco."
-  exit 1
-}
-Ok "Banco pronto."
 
 # ---------------------------------------------------------------
 # 5. Esperar a aplicacao responder

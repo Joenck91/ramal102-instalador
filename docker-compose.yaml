@@ -1,0 +1,228 @@
+# Ramal 102 — banco + aplicacao.
+#
+# A Evolution API vem JUNTO. Ate 11/09/2026 ela vivia num compose de outro
+# projeto (antigravity/verificador-de-whatsapps) que ficava solto na
+# maquina: quem mexesse nele derrubava o Ramal 102 sem saber, e instalar
+# noutro computador exigia montar dois projetos na ordem certa. Agora um
+# `docker compose up -d` sobe tudo.
+#
+# Uso diario:   docker compose up -d
+# Ver o log:    docker compose logs -f ramal
+# Parar:        docker compose down          (dados preservados)
+# Zerar:        docker compose down -v       (APAGA os dados)
+#
+# Para MEXER NO CODIGO, pare o container e use o modo dev — os dois
+# disputam a porta 3000 de proposito, para que a URL do webhook nunca
+# mude e a Evolution nao precise ser reapontada:
+#   docker compose stop ramal
+#   cd inbox/server && npm run dev     (noutro terminal: cd inbox/web && npm run dev)
+
+services:
+  inbox-postgres:
+    image: postgres:16-alpine
+    container_name: inbox_postgres
+    # `always`, nao `unless-stopped`: num desligamento do Windows o
+    # container sai com codigo 0, e `unless-stopped` le isso como "foi
+    # parado de proposito" e nao o restaura no boot seguinte. Foi o que
+    # deixou o banco fora do ar depois de reiniciar, enquanto os
+    # containers da Evolution (que usam `always`) voltaram sozinhos.
+    restart: always
+    environment:
+      POSTGRES_USER: inbox
+      POSTGRES_PASSWORD: ${INBOX_DB_PASSWORD}
+      POSTGRES_DB: inbox
+    # 5433 no host: a 5432 pertence ao Postgres da Evolution. Exposta para
+    # o modo dev e para inspecionar o banco por fora.
+    ports:
+      - "5433:5432"
+    volumes:
+      - inbox_postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U inbox -d inbox"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+
+  # Banco da Evolution. Separado do nosso de proposito: sao dados de
+  # outro dono, com outra versao do Postgres (15, nao 16) e outro ciclo
+  # de vida. Juntar economizaria um container e criaria um acoplamento
+  # que so apareceria no dia de atualizar um dos dois.
+  evolution-postgres:
+    image: postgres:15-alpine
+    container_name: evolution_postgres
+    restart: always
+    environment:
+      POSTGRES_USER: ${EVOLUTION_DB_USER:-evolution}
+      POSTGRES_PASSWORD: ${EVOLUTION_DB_PASSWORD}
+      POSTGRES_DB: ${EVOLUTION_DB_NAME:-evolution}
+    # Publicada para inspecionar por fora; dentro da rede o acesso e
+    # pelo nome do servico.
+    ports:
+      - "5432:5432"
+    volumes:
+      - evolution_postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${EVOLUTION_DB_USER:-evolution}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # A ponte com o WhatsApp. Nao e nossa: e a Evolution API, que fala o
+  # protocolo do WhatsApp e nos entrega tudo por webhook.
+  evolution:
+    image: evoapicloud/evolution-api:latest
+    container_name: evolution_api_container
+    restart: always
+    ports:
+      - "8080:8080"
+    environment:
+      AUTHENTICATION_TYPE: apikey
+      AUTHENTICATION_API_KEY: ${EVOLUTION_API_KEY}
+      REDIS_ENABLED: "false"
+      CACHE_REDIS_ENABLED: "false"
+      CORS_ORIGIN: "*"
+      CORS_METHODS: "POST,GET,PUT,DELETE"
+      CORS_CREDENTIALS: "true"
+      DATABASE_ENABLED: "true"
+      DATABASE_PROVIDER: postgresql
+      DATABASE_CONNECTION_URI: postgresql://${EVOLUTION_DB_USER:-evolution}:${EVOLUTION_DB_PASSWORD}@evolution-postgres:5432/${EVOLUTION_DB_NAME:-evolution}?schema=public
+      DATABASE_SAVE_DATA_INSTANCE: "true"
+    volumes:
+      # As chaves que mantem cada numero pareado. Perder isto obriga a
+      # ler o QR Code de novo em cada celular.
+      - evolution_instances:/evolution/instances
+      - evolution_store:/evolution/store
+    extra_hosts:
+      # A Evolution entrega os webhooks em host.docker.internal:3000. Podia
+      # ser "ramal:3000" agora que estao na mesma rede, mas isso obrigaria
+      # a reapontar o webhook de cada instancia — e a URL atual funciona
+      # tanto aqui quanto no modo dev, que e justamente a razao de ela ser
+      # assim.
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      evolution-postgres:
+        condition: service_healthy
+
+  ramal:
+    # De onde vem o Ramal.
+    #
+    # Sem a variavel, e "ramal:local" — a imagem montada aqui mesmo, que
+    # e o que quem desenvolve quer. Com ela apontando para o GitHub, o
+    # `docker compose pull` baixa pronto e a instalacao cai de uns quinze
+    # minutos para menos de um: ninguem mais compila na propria maquina.
+    #
+    # O `build` continua logo abaixo de proposito. Ele e a rede: se o
+    # download falhar — sem internet, pacote fora do ar, maquina de
+    # arquitetura diferente —, da para montar na hora com
+    # `docker compose up -d --build` e seguir a vida.
+    image: ${RAMAL_IMAGEM:-ramal:local}
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        # Para o Ramal saber que versao ele e. Montando aqui fica "local",
+        # que e a resposta honesta.
+        RAMAL_VERSAO: ${RAMAL_VERSAO:-local}
+    container_name: ramal
+    restart: always
+    ports:
+      - "3000:3000"
+    env_file:
+      # Senhas e chaves vem do .env, fonte unica compartilhada com o
+      # Postgres acima.
+      - .env
+    environment:
+      # Sobrescreve apenas os enderecos, que sao diferentes vistos de
+      # dentro do container. `environment` tem precedencia sobre env_file.
+      NODE_ENV: production
+      PORT: 3000
+      # Nome do servico, nao localhost: dentro da rede do compose o banco
+      # atende por "inbox-postgres" na porta interna 5432.
+      DATABASE_URL: postgresql://inbox:${INBOX_DB_PASSWORD}@inbox-postgres:5432/inbox?schema=public
+      # Pelo nome do servico: a Evolution agora e do mesmo compose, e
+      # assim o endereco nao depende de a porta 8080 estar publicada no
+      # host. No modo dev o .env aponta para localhost:8080, que continua
+      # valendo porque a porta segue publicada.
+      EVOLUTION_URL: http://evolution:8080
+      # Inalterada em relacao ao modo dev, e e por isso que alternar entre
+      # os dois modos nao exige reapontar o webhook das instancias.
+      PUBLIC_WEBHOOK_URL: http://host.docker.internal:3000/webhook/evolution
+    volumes:
+      # Cache da midia baixada. Em volume para sobreviver a reconstrucoes
+      # da imagem — sem isso, toda mudanca de codigo forcaria baixar tudo
+      # de novo da Evolution.
+      - ramal_media:/app/media
+      # So para LER: a tela de backup mostra o que existe e quando foi.
+      # Escrever nas copias nao e tarefa de quem atende mensagem.
+      - ${BACKUP_DIR:-./backups}:/backups:ro
+      - backup_sinal:/sinal
+    extra_hosts:
+      # No Docker Desktop host.docker.internal ja existe; no Docker de
+      # Linux, nao. Declarar aqui mantem a imagem portavel.
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      inbox-postgres:
+        condition: service_healthy
+      evolution:
+        condition: service_started
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+
+  # Copia diaria de tudo que nao da para refazer.
+  #
+  # Um container, e nao a Tarefa Agendada do Windows, porque o resto da
+  # instalacao ja e `docker compose up -d`: um agendamento fora dele
+  # seria um passo a mais para lembrar ao instalar noutra maquina, e o
+  # primeiro a ser esquecido.
+  #
+  # Usa a imagem do Postgres 16 pelo `pg_dump`, que le tanto o banco 16
+  # do inbox quanto o 15 da Evolution (o contrario e que nao vale).
+  backup:
+    image: postgres:16-alpine
+    container_name: ramal_backup
+    restart: always
+    environment:
+      INBOX_DB_PASSWORD: ${INBOX_DB_PASSWORD}
+      EVOLUTION_DB_HOST: ${EVOLUTION_DB_HOST:-evolution-postgres}
+      EVOLUTION_DB_PORT: ${EVOLUTION_DB_PORT:-5432}
+      EVOLUTION_DB_USER: ${EVOLUTION_DB_USER:-evolution}
+      EVOLUTION_DB_PASSWORD: ${EVOLUTION_DB_PASSWORD}
+      EVOLUTION_DB_NAME: ${EVOLUTION_DB_NAME:-evolution}
+      BACKUP_HORA: ${BACKUP_HORA:-03}
+      TZ: America/Sao_Paulo
+    volumes:
+      - ./scripts:/scripts:ro
+      - ./.env:/origem/.env:ro
+      - ramal_media:/vol/midia:ro
+      - evolution_instances:/vol/sessoes:ro
+      # Caixa de recados entre o aplicativo e este container: por ela
+      # chega o pedido do botao "Atualizar agora" e volta o andamento.
+      - backup_sinal:/sinal
+      # Fica FORA de qualquer volume do Docker de proposito: backup que
+      # some junto com `docker compose down -v` nao e backup.
+      - ${BACKUP_DIR:-./backups}:/backups
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    entrypoint: ["/bin/sh", "/scripts/agendador.sh"]
+    depends_on:
+      inbox-postgres:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+
+volumes:
+  inbox_postgres:
+  ramal_media:
+  backup_sinal:
+  evolution_postgres:
+  # Onde a Evolution guarda as chaves que mantem os numeros pareados.
+  evolution_instances:
+  evolution_store:

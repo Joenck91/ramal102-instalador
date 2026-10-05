@@ -1,0 +1,6 @@
+﻿# Quem instalar dentro desta pasta gera estes. Nenhum deles e para
+# publicar: o .env sao as senhas e as chaves do WhatsApp.
+.env
+.env.local
+.env.antes-da-atualizacao
+backups/

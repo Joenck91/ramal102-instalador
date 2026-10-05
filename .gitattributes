@@ -1,0 +1,10 @@
+﻿# Rodam em Linux/Mac: fim de linha LF, sempre.
+*.sh text eol=lf
+*.yaml text eol=lf
+.env.exemplo text eol=lf
+
+# Rodam no Windows e vao byte a byte, sem o git converter nada: o
+# montador ja gravou o CRLF e o marcador de acento certos, e qualquer
+# conversao no caminho so teria como piorar isso.
+*.bat -text
+*.ps1 -text

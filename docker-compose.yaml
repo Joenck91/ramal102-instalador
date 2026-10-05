@@ -1,3 +1,19 @@
+# Nome fixo do conjunto, e nao o nome da pasta.
+#
+# Sem esta linha o Docker batiza tudo com o nome da PASTA — e os
+# volumes, que guardam as conversas e o pareamento de cada numero,
+# carregam esse nome. Renomear ou mover a pasta faria o Docker
+# entender que e outra instalacao: subiria tudo vazio, pedindo QR Code
+# de novo, com os dados antigos ainda no disco mas invisiveis.
+#
+# Nao e hipotese. Cada pessoa extrai o .zip num lugar diferente, com um
+# nome diferente, e uma delas vai arrumar a pasta algum dia.
+#
+# A variavel fica no meio para as instalacoes que JA existem: quem ja
+# roda com outro nome escreve COMPOSE_PROJECT_NAME no .env e continua
+# com os volumes de sempre.
+name: ${COMPOSE_PROJECT_NAME:-ramal102}
+
 # Ramal 102 — banco + aplicacao.
 #
 # A Evolution API vem JUNTO. Ate 11/09/2026 ela vivia num compose de outro

@@ -15,6 +15,15 @@ Todos os seus WhatsApps numa caixa só, rodando no seu computador.
    do `.zip` para cada arquivo de dentro na hora de extrair. Tirando
    antes, os arquivos nascem limpos.
 4. Extraia numa pasta sua, como `C:\Ramal102`.
+
+   **Escolha a pasta com calma e não mexa nela depois.** Mover ou
+   renomear funciona, mas é trabalho: o Docker usa o caminho para achar
+   onde as suas conversas estão guardadas. Se precisar mudar de lugar
+   um dia, peça ajuda antes.
+
+   Evite deixar dentro do OneDrive ou do Google Drive. O arquivo de
+   senhas iria junto para a nuvem, e a sincronização briga com arquivo
+   que está em uso.
 5. Dois cliques em **instalar.bat**.
 6. Responda nome, e-mail e empresa. **Anote a senha que aparecer no
    final** — é com ela que você entra.
@@ -37,13 +46,22 @@ direito num lugar vazio e escolha **Abrir a janela do PowerShell
 aqui**. Cole a linha abaixo e tecle Enter:
 
 ```powershell
-Get-ChildItem -Recurse | Unblock-File; .\instalar.ps1
+Get-ChildItem -Recurse | Unblock-File
+powershell -NoProfile -ExecutionPolicy Bypass -File .\instalar.ps1
 ```
 
+São duas linhas, e cada uma resolve uma trava diferente:
+
+- `Unblock-File` tira o carimbo de "veio da internet" dos arquivos. É
+  o mesmo efeito do passo 3 acima, feito depois em vez de antes.
+- `-ExecutionPolicy Bypass` destrava a execução **só desta vez**, nesta
+  janela. O Windows vem de fábrica recusando qualquer script, mesmo um
+  que você acabou de desbloquear, e sem isso aparece *"a execução de
+  scripts foi desabilitada neste sistema"*. Não mexe na configuração da
+  máquina: feche a janela e tudo volta como estava.
+
 Funciona porque quem está sendo executado é o PowerShell, que faz parte
-do Windows — e não um arquivo que veio da internet. O `Unblock-File`
-tira o carimbo dos arquivos, que é o mesmo efeito do passo 3 acima,
-feito depois em vez de antes.
+do Windows — e não um arquivo que veio da internet.
 
 > Existe também a opção de desligar o Controle de Aplicativo
 > Inteligente nas configurações de segurança do Windows. **Não

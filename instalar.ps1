@@ -22,6 +22,19 @@ function Ok($texto)    { Write-Host "   $texto" -ForegroundColor Green }
 function Aviso($texto) { Write-Host "   $texto" -ForegroundColor Yellow }
 function Erro($texto)  { Write-Host "   $texto" -ForegroundColor Red }
 
+# O que a pessoa digitou atras dos asteriscos.
+#
+# O SecureString existe para o valor nao ficar solto na memoria, e o
+# .NET nao da o texto de graca: e preciso copiar para fora, ler e
+# liberar na mao. O `finally` garante a liberacao mesmo se algo
+# estourar no meio.
+function Texto($segura) {
+  if (-not $segura -or $segura.Length -eq 0) { return "" }
+  $ponteiro = [System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($segura)
+  try   { return [System.Runtime.InteropServices.Marshal]::PtrToStringBSTR($ponteiro) }
+  finally { [System.Runtime.InteropServices.Marshal]::ZeroFreeBSTR($ponteiro) }
+}
+
 function TemComando($nome) {
   $null -ne (Get-Command $nome -ErrorAction SilentlyContinue)
 }
@@ -159,12 +172,45 @@ if (Test-Path ".env") {
   $empresa = Read-Host "   Nome da empresa (aparece no rodape)"
   if ([string]::IsNullOrWhiteSpace($empresa)) { $empresa = "Minha empresa" }
 
+  # A senha NAO aparece enquanto e digitada.
+  #
+  # O Read-Host comum escreve na tela o que a pessoa digita, e a tela
+  # da instalacao e justamente a que vira foto: quem instala manda um
+  # print para quem esta ajudando. Ja aconteceu uma vez.
+  #
+  # Mascarada, ela precisa ser pedida duas vezes — sem ver o que
+  # digitou, um dedo errado so apareceria na hora de entrar, quando
+  # ninguem mais liga os dois fatos.
   Write-Host ""
   Write-Host "   Escolha a senha para entrar no Ramal 102."
+  Write-Host "   Ela nao aparece na tela enquanto voce digita."
   Write-Host "   (deixe em branco para eu sortear uma)"
-  $senhaApp = Read-Host "   Senha"
-  if ([string]::IsNullOrWhiteSpace($senhaApp)) {
-    $senhaApp = Segredo 9
+
+  # O servidor exige 8 para trocar a senha pela tela. Aceitar menos
+  # aqui criaria uma senha que entra hoje e e recusada no dia em que a
+  # pessoa for muda-la.
+  $MINIMO = 8
+  $script:sorteada = $false
+
+  while ($true) {
+    $senhaApp = Texto (Read-Host "   Senha" -AsSecureString)
+    if ([string]::IsNullOrWhiteSpace($senhaApp)) {
+      $senhaApp = Segredo 9
+      $script:sorteada = $true
+      break
+    }
+    if ($senhaApp.Length -lt $MINIMO) {
+      Aviso "Muito curta. Use ao menos $MINIMO caracteres."
+      continue
+    }
+    if ((Texto (Read-Host "   Repita a senha" -AsSecureString)) -ne $senhaApp) {
+      Aviso "As duas nao batem. Vamos de novo."
+      continue
+    }
+    break
+  }
+
+  if ($script:sorteada) {
     Aviso "Senha sorteada: $senhaApp"
     Aviso "ANOTE AGORA. Ela tambem fica no arquivo .env."
   }
@@ -322,7 +368,14 @@ foreach ($linha in Get-Content ".env") {
 }
 if ($envAtual['ADMIN_EMAIL']) {
   Write-Host "  Entre:  $($envAtual['ADMIN_EMAIL'])" -ForegroundColor White
-  Write-Host "  Senha:  $($envAtual['APP_PASSWORD'])" -ForegroundColor White
+  if ($script:sorteada) {
+    # So quando fui eu que escolhi: a pessoa nao tem outro jeito de
+    # saber. A que ela digitou, ela ja sabe — e repetir na tela e
+    # expor de novo.
+    Write-Host "  Senha:  $($envAtual['APP_PASSWORD'])" -ForegroundColor White
+  } else {
+    Write-Host "  Senha:  a que voce escolheu" -ForegroundColor White
+  }
 }
 Write-Host ""
 Write-Host "  Falta um passo, e esse e no celular: entre, va em"

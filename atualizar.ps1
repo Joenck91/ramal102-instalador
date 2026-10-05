@@ -17,6 +17,29 @@
 # pede para ler QR Code de novo.
 
 $ErrorActionPreference = "Stop"
+
+# Roda um programa externo sem o script morrer por causa de um aviso.
+#
+# Isto parece firula e nao e. Com $ErrorActionPreference = "Stop", o
+# "2>&1" num programa externo faz o PowerShell 5.1 embrulhar CADA
+# linha que o programa escreveu no canal de erro — inclusive avisos
+# inofensivos, como "a variavel X nao foi definida" — num erro de
+# verdade. E um erro de verdade, com Stop ligado, mata o script.
+#
+# No meio de uma atualizacao isso e grave: os arquivos ja foram
+# trocados e o processo para antes de subir, deixando a instalacao
+# pela metade por causa de uma mensagem que nem era problema.
+#
+# Aqui o canal de erro e solto so durante a chamada. O codigo de saida
+# do programa, que e o que realmente diz se deu certo, continua valendo
+# em $LASTEXITCODE.
+function Rodar {
+  param([scriptblock]$Comando)
+  $antes = $ErrorActionPreference
+  $ErrorActionPreference = "Continue"
+  try { & $Comando } finally { $ErrorActionPreference = $antes }
+}
+
 $raiz = Split-Path -Parent $MyInvocation.MyCommand.Path
 Set-Location $raiz
 
@@ -32,13 +55,74 @@ Write-Host "  Ramal 102 — atualizacao" -ForegroundColor White
 # 1. Onde esta a versao nova
 # ---------------------------------------------------------------
 
+# De onde vem a versao nova.
+#
+# O repositorio e publico de proposito: sem conta, sem senha, sem
+# programa nenhum alem do que o Windows ja tem. Se um dia ele mudar de
+# nome ou de dono, e esta linha que muda.
+$FONTE = "https://github.com/Joenck91/ramal102-instalador/archive/refs/heads/main.zip"
+
+# Arrastar uma pasta continua funcionando, e e a saida quando o
+# download nao e possivel — maquina sem internet, rede da empresa que
+# bloqueia o GitHub, ou uma versao especifica que voce quer aplicar.
 $origem = $args[0]
+if ($origem) { $origem = $origem.Trim().Trim([char]34) }
+
+$baixado = $null
 if (-not $origem) {
-  Write-Host ""
-  Write-Host "   Arraste para aqui a pasta com a versao nova e tecle Enter."
-  $origem = (Read-Host "   Pasta").Trim()
-  # Arrastar uma pasta no Windows entrega o caminho entre aspas.
-  $origem = $origem.Trim([char]34)
+  Titulo "Buscando a versao nova"
+  Write-Host "   De: github.com/Joenck91/ramal102-instalador"
+
+  # O Windows PowerShell 5.1 ainda tenta TLS 1.0 por padrao, e o GitHub
+  # recusa ha anos. Sem esta linha o download falha com um erro de
+  # conexao que nao diz nada sobre a causa.
+  try {
+    [Net.ServicePointManager]::SecurityProtocol =
+      [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+  } catch { }
+
+  $baixado = Join-Path ([System.IO.Path]::GetTempPath()) ("ramal102-" + [guid]::NewGuid().ToString("N"))
+  New-Item -ItemType Directory -Force -Path $baixado | Out-Null
+  $zip = Join-Path $baixado "versao.zip"
+
+  try {
+    # A barra de progresso do Invoke-WebRequest deixa o download varias
+    # vezes mais lento no PowerShell 5.1. Desligada so aqui dentro.
+    $antes = $ProgressPreference
+    $ProgressPreference = "SilentlyContinue"
+    Invoke-WebRequest -Uri $FONTE -OutFile $zip -UseBasicParsing
+    $ProgressPreference = $antes
+  } catch {
+    Erro "Nao consegui baixar a versao nova."
+    Erro "$($_.Exception.Message)"
+    Write-Host ""
+    Write-Host "   Quase sempre e internet fora, ou a rede da empresa"
+    Write-Host "   bloqueando o GitHub."
+    Write-Host ""
+    Write-Host "   Dá para atualizar na mao: baixe o ZIP em"
+    Write-Host "   github.com/Joenck91/ramal102-instalador, extraia, e"
+    Write-Host "   arraste a pasta por cima deste atualizar.bat."
+    Remove-Item $baixado -Recurse -Force -ErrorAction SilentlyContinue
+    exit 1
+  }
+
+  Expand-Archive -Path $zip -DestinationPath $baixado -Force
+  Remove-Item $zip -Force
+
+  # O ZIP do GitHub embrulha tudo numa pasta so, com o nome do galho.
+  $origem = (Get-ChildItem $baixado -Directory | Select-Object -First 1).FullName
+  if (-not $origem) {
+    Erro "O arquivo baixado veio vazio."
+    Remove-Item $baixado -Recurse -Force -ErrorAction SilentlyContinue
+    exit 1
+  }
+
+  # Tudo que vem da internet chega carimbado, e o carimbo passa para a
+  # copia. Sem tirar aqui, o proximo duplo clique seria bloqueado pelo
+  # Windows — o mesmo susto da primeira instalacao.
+  Get-ChildItem $origem -Recurse -File | Unblock-File -ErrorAction SilentlyContinue
+
+  Ok "Versao nova baixada."
 }
 
 if (-not (Test-Path (Join-Path $origem "docker-compose.yaml"))) {
@@ -82,7 +166,15 @@ Titulo "Trazendo a versao nova"
 Write-Host "   (o .env e a pasta backups ficam como estao)"
 
 $excluirPastas = @("backups", "node_modules", ".git", "media")
-$excluirArquivos = @(".env", ".env.antes-da-atualizacao")
+
+# O atualizar.bat fica de fora porque ELE esta rodando agora.
+#
+# O cmd.exe le um .bat conforme executa, guardando a posicao no
+# arquivo. Trocar o arquivo embaixo dele faz a proxima leitura cair no
+# meio de outra linha, e o que acontece dali em diante e imprevisivel.
+# O .ps1 nao tem esse problema: o PowerShell le o arquivo inteiro antes
+# de comecar.
+$excluirArquivos = @(".env", ".env.antes-da-atualizacao", "atualizar.bat")
 
 $argumentos = @($origem, $raiz, "/E", "/NFL", "/NDL", "/NJH", "/NJS", "/NP")
 $argumentos += "/XD"; $argumentos += $excluirPastas
@@ -95,6 +187,28 @@ if ($LASTEXITCODE -ge 8) {
   exit 1
 }
 $global:LASTEXITCODE = 0
+
+# E se o proprio atualizador mudou, ele fica ao lado para a pessoa
+# trocar na mao. Acontece raramente — o .bat tem dezesseis linhas e
+# todo o trabalho esta no .ps1, que foi atualizado normalmente.
+$batNovo = Join-Path $origem "atualizar.bat"
+if (Test-Path $batNovo) {
+  $iguais = (Get-FileHash $batNovo).Hash -eq (Get-FileHash (Join-Path $raiz "atualizar.bat")).Hash
+  if (-not $iguais) {
+    Copy-Item $batNovo (Join-Path $raiz "atualizar-novo.bat") -Force
+    Aviso "O proprio atualizador mudou. Depois que esta janela fechar:"
+    Aviso "apague o atualizar.bat e renomeie atualizar-novo.bat no lugar."
+  }
+}
+
+# O temporario ja cumpriu o papel. Apagar aqui, e nao no fim: dali para
+# a frente ha varias saidas por erro, e cada uma deixaria para tras uns
+# 100 KB numa pasta que ninguem olha.
+if ($baixado) {
+  Remove-Item $baixado -Recurse -Force -ErrorAction SilentlyContinue
+  $baixado = $null
+}
+
 Ok "Arquivos atualizados."
 
 # ---------------------------------------------------------------
@@ -120,17 +234,30 @@ Titulo "Subindo"
 # Mesma logica do instalador: baixar pronto quando existe, montar aqui
 # quando nao. Ver o comentario longo no instalar.ps1.
 Write-Host "   Procurando a versao pronta..."
-docker compose pull ramal 2>&1 | Out-Null
+Rodar { docker compose pull ramal 2>&1 } | Out-Null
 $prontoNaMao = ($LASTEXITCODE -eq 0)
 $global:LASTEXITCODE = 0
 
 if ($prontoNaMao) {
   Ok "Baixada."
   docker compose up -d
-} else {
+} elseif (Test-Path "Dockerfile") {
   Aviso "Sem versao pronta. Remontando aqui, o que leva alguns minutos."
   Write-Host ""
   docker compose up -d --build
+} else {
+  # Mesma razao do instalador: a pasta nao traz o codigo-fonte, so o
+  # necessario para rodar. Sem o download nao ha plano B — e dizer isso
+  # e melhor que deixar o Docker reclamar de um Dockerfile que nunca
+  # existiu. Os arquivos ja foram trocados, mas o Ramal antigo continua
+  # no ar: nada se perdeu, so nao avancou.
+  Erro "Nao consegui baixar a versao nova do Ramal."
+  Erro ""
+  Erro "O Ramal que ja estava rodando continua no ar, e os seus dados"
+  Erro "estao intactos. Tente de novo quando a internet voltar."
+  Erro ""
+  Erro "Para ver o que o Docker respondeu:  docker compose pull ramal"
+  exit 1
 }
 
 if ($LASTEXITCODE -ne 0) {
@@ -142,7 +269,8 @@ Ok "Containers no ar."
 # Mudancas de banco entram aqui. O comando e idempotente: quando nao ha
 # nada novo, ele nao faz nada.
 Titulo "Ajustando o banco"
-docker compose exec -T ramal npx prisma db push 2>&1 | Select-String -NotMatch "^$"
+Rodar { docker compose exec -T ramal npx prisma db push 2>&1 } |
+  Select-String -NotMatch "^$"
 if ($LASTEXITCODE -ne 0) {
   Erro "Nao consegui ajustar o banco."
   exit 1

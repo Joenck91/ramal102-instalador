@@ -9,6 +9,29 @@
 # problema no primeiro contratempo.
 
 $ErrorActionPreference = "Stop"
+
+# Roda um programa externo sem o script morrer por causa de um aviso.
+#
+# Isto parece firula e nao e. Com $ErrorActionPreference = "Stop", o
+# "2>&1" num programa externo faz o PowerShell 5.1 embrulhar CADA
+# linha que o programa escreveu no canal de erro — inclusive avisos
+# inofensivos, como "a variavel X nao foi definida" — num erro de
+# verdade. E um erro de verdade, com Stop ligado, mata o script.
+#
+# No meio de uma atualizacao isso e grave: os arquivos ja foram
+# trocados e o processo para antes de subir, deixando a instalacao
+# pela metade por causa de uma mensagem que nem era problema.
+#
+# Aqui o canal de erro e solto so durante a chamada. O codigo de saida
+# do programa, que e o que realmente diz se deu certo, continua valendo
+# em $LASTEXITCODE.
+function Rodar {
+  param([scriptblock]$Comando)
+  $antes = $ErrorActionPreference
+  $ErrorActionPreference = "Continue"
+  try { & $Comando } finally { $ErrorActionPreference = $antes }
+}
+
 $raiz = Split-Path -Parent $MyInvocation.MyCommand.Path
 Set-Location $raiz
 
@@ -93,7 +116,7 @@ Ok "Docker instalado."
 
 # Rodando? Ate dois minutos: o Docker Desktop demora a subir depois do
 # login do Windows, e desistir em dez segundos reprovaria uma maquina boa.
-docker info 2>&1 | Out-Null
+Rodar { docker info 2>&1 } | Out-Null
 if ($LASTEXITCODE -ne 0) {
   Aviso "O Docker esta instalado mas nao esta rodando. Abrindo..."
   $exe = "$env:ProgramFiles\Docker\Docker\Docker Desktop.exe"
@@ -102,12 +125,12 @@ if ($LASTEXITCODE -ne 0) {
   $limite = (Get-Date).AddMinutes(2)
   while ((Get-Date) -lt $limite) {
     Start-Sleep -Seconds 5
-    docker info 2>&1 | Out-Null
+    Rodar { docker info 2>&1 } | Out-Null
     if ($LASTEXITCODE -eq 0) { break }
     Write-Host "   esperando o Docker subir..."
   }
 
-  docker info 2>&1 | Out-Null
+  Rodar { docker info 2>&1 } | Out-Null
   if ($LASTEXITCODE -ne 0) {
     Erro "O Docker nao subiu."
     Write-Host ""
@@ -273,7 +296,7 @@ Titulo "Subindo o Ramal 102"
 # Tentar e a unica forma de descobrir, e falhar aqui nao custa nada.
 
 Write-Host "   Procurando o Ramal 102 pronto..."
-docker compose pull ramal 2>&1 | Out-Null
+Rodar { docker compose pull ramal 2>&1 } | Out-Null
 $prontoNaMao = ($LASTEXITCODE -eq 0)
 $global:LASTEXITCODE = 0
 
@@ -317,7 +340,8 @@ Ok "Containers no ar."
 # sem ninguem precisar lembrar.
 
 Titulo "Preparando o banco"
-docker compose exec -T ramal npx prisma db push 2>&1 | Select-String -NotMatch "^$"
+Rodar { docker compose exec -T ramal npx prisma db push 2>&1 } |
+  Select-String -NotMatch "^$"
 if ($LASTEXITCODE -ne 0) {
   Erro "Nao consegui preparar o banco."
   exit 1

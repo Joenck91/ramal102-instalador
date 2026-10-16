@@ -2,6 +2,24 @@
 
 Todos os seus WhatsApps numa caixa só, rodando no seu computador.
 
+Esta é a **versão gratuita**. Ela é completa no que faz: números
+ilimitados na mesma tela, conversas, etiquetas, respostas rápidas,
+busca, cópia de segurança. Não tem prazo, não pede cartão, não expira.
+
+O que ela não traz é o que a versão paga tem a mais — e você vê cada
+um deles marcado na própria tela, no lugar onde ele ficaria:
+
+| | |
+|---|---|
+| **Alerta de Espera** | apita quando um cliente está esperando resposta, e cobra de novo se você sair sem resolver |
+| **Agendar retorno** | "me lembre deste cliente na terça às 9h", com a mensagem saindo sozinha |
+| **Nota interna** | o recado que só a sua equipe vê, dentro da conversa |
+| **Ações em lote** | resolver, etiquetar ou arquivar dezenas de uma vez |
+| **Verificador** | saber quais de uma lista de números têm WhatsApp |
+| **Equipe** | mais de uma pessoa atendendo na mesma caixa |
+
+Sem limite de tempo nos dois casos: o gratuito é gratuito para sempre.
+
 ## Instalar
 
 1. Instale o **Docker Desktop** e abra ele uma vez. Ele precisa estar

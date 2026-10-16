@@ -49,10 +49,23 @@ function Rodar {
 #
 # Tres tentativas com uma pausa entre elas. Nao resolve internet fora,
 # e nem deveria: resolve o tropeco, que e o caso comum.
+# Guarda se a recusa foi de PERMISSAO, e nao de rede. As duas falham
+# igual para o Docker e sao coisas opostas para quem esta lendo a tela.
+$global:semPermissao = $false
+
 function BaixarComTeimosia {
   for ($i = 1; $i -le 3; $i++) {
-    Rodar { docker compose pull ramal 2>&1 } | Out-Null
+    $saida = Rodar { docker compose pull ramal 2>&1 }
     if ($LASTEXITCODE -eq 0) { return $true }
+
+    # "unauthorized" ou "denied" quer dizer que a imagem existe e e
+    # fechada. Insistir nao resolve e so faz a pessoa esperar quinze
+    # segundos por uma resposta que ja veio.
+    if ("$saida" -match "unauthorized|denied|authentication required") {
+      $global:semPermissao = $true
+      return $false
+    }
+
     if ($i -lt 3) {
       Aviso "Nao veio na tentativa $i. Esperando e tentando de novo..."
       Start-Sleep -Seconds 5
@@ -260,6 +273,20 @@ $global:LASTEXITCODE = 0
 
 if ($prontoNaMao) {
   Ok "Baixada."
+} elseif ($global:semPermissao) {
+  # A versao COMPLETA do Ramal e fechada, e quem a atualiza e o Grupo
+  # Booz. Sem esta mensagem o cliente veria "unauthorized" em ingles e
+  # acharia que quebrou alguma coisa — quando nada quebrou e o Ramal
+  # dele nem parou.
+  Write-Host ""
+  Aviso "Esta e a versao completa do Ramal, e ela e atualizada por nos."
+  Aviso ""
+  Aviso "Nada aconteceu de errado: o seu Ramal continua no ar, do jeito"
+  Aviso "que estava, com tudo no lugar."
+  Aviso ""
+  Aviso "Para receber a versao nova, chame o Grupo Booz no WhatsApp."
+  Write-Host ""
+  exit 0
 } elseif (-not (Test-Path "Dockerfile")) {
   # A pasta nao traz o codigo-fonte, so o necessario para rodar. Sem o
   # download nao ha plano B — e dizer isso e melhor que deixar o Docker

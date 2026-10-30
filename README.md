@@ -49,6 +49,25 @@ Sem limite de tempo nos dois casos: o gratuito é gratuito para sempre.
 Leva menos de um minuto. No fim o navegador abre sozinho em
 http://localhost:3000.
 
+## Desinstalar
+
+Dois cliques em **desinstalar.bat**.
+
+Ele pergunta uma coisa antes e uma coisa depois: se você quer guardar
+uma cópia das conversas, e o que fazer com os dados —
+
+| | |
+|---|---|
+| **Guardar** | tira o Ramal, mas as conversas ficam. Reinstalando, tudo volta |
+| **Apagar** | conversas, números pareados e configurações somem; as cópias ficam |
+| **Apagar tudo** | não sobra nada, nem as cópias |
+
+As duas últimas pedem que você digite `APAGAR`, porque não têm volta.
+
+**Apagar a pasta não desinstala.** As conversas ficam guardadas pelo
+Docker, fora da pasta, e continuariam ocupando vários gigabytes sem
+aparecer em lugar nenhum. É por isso que este arquivo existe.
+
 ## Se o Windows bloquear
 
 Pode aparecer **"O Controle de Aplicativo Inteligente bloqueou um

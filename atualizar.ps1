@@ -55,13 +55,27 @@ $global:semPermissao = $false
 
 function BaixarComTeimosia {
   for ($i = 1; $i -le 3; $i++) {
-    $saida = Rodar { docker compose pull ramal 2>&1 }
+    # `--progress plain` e o detalhe que faz esta funcao funcionar.
+    #
+    # Sem ele, o compose desenha uma barra de progresso com codigos de
+    # terminal que reescrevem a linha por cima dela mesma. Capturado,
+    # o texto chega picado — numa atualizacao de verdade saiu
+    # "[+] pull 1/1ARNING:", com letras comidas. A palavra que esta
+    # funcao procura some no meio, a recusa por falta de chave vira
+    # "nao consegui baixar", e o cliente acha que comprou uma coisa
+    # quebrada quando nao ha nada quebrado.
+    $saida = Rodar { docker compose --progress plain pull ramal 2>&1 }
     if ($LASTEXITCODE -eq 0) { return $true }
 
     # "unauthorized" ou "denied" quer dizer que a imagem existe e e
     # fechada. Insistir nao resolve e so faz a pessoa esperar quinze
     # segundos por uma resposta que ja veio.
-    if ("$saida" -match "unauthorized|denied|authentication required") {
+    #
+    # O texto e normalizado antes: cada linha capturada pode vir como
+    # objeto de erro, e juntar com espaco garante que uma palavra nao
+    # fique colada na seguinte.
+    $texto = ($saida | ForEach-Object { "$_" }) -join " "
+    if ($texto -match "unauthorized|denied|authentication required|forbidden") {
       $global:semPermissao = $true
       return $false
     }

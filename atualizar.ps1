@@ -328,10 +328,48 @@ if ($prontoNaMao) {
 # entrar nele para ajustar o banco — e e esse o unico caminho de volta.
 #
 # Fazendo antes, quem roda o ajuste e um container avulso, e o Ramal
-# ANTIGO segue no ar atendendo durante isso. Funciona porque mudanca de
-# banco aqui so soma: coluna nova nao atrapalha a versao velha.
+# ANTIGO segue no ar atendendo durante isso.
+#
+# DUAS ETAPAS, NESTA ORDEM: primeiro sai o que a versao nova
+# aposentou, depois o push acerta o resto.
+#
+# O push so apaga coluna VAZIA. Coluna com dado dentro ele se recusa a
+# apagar, e e bom que se recuse: e o unico freio entre um engano no
+# schema e a coluna cheia de um cliente. Passar `--accept-data-loss`
+# tiraria esse freio para sempre. Entao o que saiu de proposito esta
+# escrito a mao em `src/aposentar.ts`, com data e motivo, e e so isso
+# que a primeira etapa apaga.
+#
+# ATE A v0.9.1 A LIMPEZA RODAVA DEPOIS DO PUSH — e por isso nunca
+# rodava quando precisava. Se a coluna estava vazia, o push ja a tinha
+# apagado e a limpeza nao achava nada. Se tinha dado, o push se
+# recusava, a atualizacao parava em "Nao consegui ajustar o banco", e
+# a limpeza, que vinha depois, nao chegava a acontecer. Achado em
+# 10/11/2026 ensaiando a atualizacao da Eyshila: bastava UM card
+# tirado da fila com motivo anotado para ela nao conseguir atualizar.
+#
+# O PRECO de limpar antes: por alguns segundos, ate a troca terminar,
+# o Ramal antigo pode tropecar na coluna que sumiu — a fila dele, no
+# caso do motivo. E o mesmo que o push ja fazia com coluna vazia, e so
+# dura o tempo da atualizacao.
 Titulo "Ajustando o banco"
 Rodar { docker compose up -d --wait inbox-postgres 2>&1 } | Out-Null
+
+# A lista do que sair vem DA VERSAO NOVA, e nao deste arquivo: quem roda
+# e a imagem que acabou de chegar. Por isso, quando uma versao futura
+# aposentar outra coisa, este atualizador ja sabe tirar — sem precisar
+# ser trocado antes.
+#
+# Nao derruba a atualizacao se falhar: se nada aposentado tinha dado
+# dentro, o push abaixo resolve sozinho. Se tinha, e o push que vai
+# parar, com a mensagem de sempre.
+Rodar { docker compose run --rm --no-deps -T ramal node dist/aposentar.js 2>&1 } |
+  Select-String -NotMatch "^$|Update available|prisma@latest|@prisma/client|major-version|^.{0,3}$"
+if ($LASTEXITCODE -ne 0) {
+  Aviso "Nao consegui tirar do banco o que a versao nova aposentou. Sigo assim mesmo."
+  $global:LASTEXITCODE = 0
+}
+
 Rodar { docker compose run --rm --no-deps -T ramal npx prisma db push 2>&1 } |
   Select-String -NotMatch "^$|Update available|prisma@latest|@prisma/client|major-version|^.{0,3}$"
 if ($LASTEXITCODE -ne 0) {
@@ -362,7 +400,7 @@ if ($LASTEXITCODE -ne 0) {
 Ok "Containers no ar."
 
 # ---------------------------------------------------------------
-# 6. Esperar responder
+# 7. Esperar responder
 # ---------------------------------------------------------------
 
 Titulo "Conferindo"

@@ -107,6 +107,21 @@ services:
       DATABASE_PROVIDER: postgresql
       DATABASE_CONNECTION_URI: postgresql://${EVOLUTION_DB_USER:-evolution}:${EVOLUTION_DB_PASSWORD}@evolution-postgres:5432/${EVOLUTION_DB_NAME:-evolution}?schema=public
       DATABASE_SAVE_DATA_INSTANCE: "true"
+      # A memoria de "este numero tem WhatsApp", por 30 dias.
+      #
+      # Desligada, a Evolution pergunta ao WhatsApp se o numero existe
+      # ANTES DE CADA MENSAGEM — ate para quem conversa com a gente todo
+      # dia — e tambem antes de ler um perfil (o recado da triagem da
+      # fila). Pergunta demais e o que faz o numero ser bloqueado.
+      #
+      # So guarda quem TEM WhatsApp; o "nao tem" e sempre perguntado de
+      # novo. O risco e o contrario: quem apagou a conta continua
+      # "existindo" por ate 30 dias, e a mensagem falha como falharia
+      # para qualquer numero sem WhatsApp. O Luis escolheu os 30 dias em
+      # 15/11/2026: "raramente os contatos vao ficar desativando o
+      # whatsapp".
+      DATABASE_SAVE_IS_ON_WHATSAPP: "true"
+      DATABASE_SAVE_IS_ON_WHATSAPP_DAYS: "30"
     volumes:
       # As chaves que mantem cada numero pareado. Perder isto obriga a
       # ler o QR Code de novo em cada celular.
